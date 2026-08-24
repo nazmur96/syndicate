@@ -229,3 +229,20 @@ def test_invalid_crosspost_block_aborts_the_run(tmp_path):
     p.write_text("---\ntitle: X\ncrosspost:\n  devto: sideways\n---\n\nBody.\n")
     with pytest.raises(CrosspostInvalid):
         make(tmp_path, StubDevTo(), StubLinkedIn()).run([p], mode="draft")
+
+
+def test_draft_result_always_names_the_dashboard_even_when_a_temp_url_exists(tmp_path):
+    # dev.to does return a temp-slug URL for a draft, but it is not a stable
+    # place to review it -- the tracking output must still name the dashboard.
+    class TempUrlDevTo(StubDevTo):
+        def create_draft(self, **kw):
+            from syndicate.platforms.base import WriteResult
+            self.created.append(kw)
+            return WriteResult(remote_id="42", url="https://dev.to/me/x-temp-slug-1", state="draft")
+
+    results = make(tmp_path, TempUrlDevTo(), StubLinkedIn()).run(
+        [write_doc(tmp_path)], mode="draft"
+    )
+    dev = next(r for r in results if r.platform == "devto")
+    assert dev.url == "https://dev.to/me/x-temp-slug-1"
+    assert "https://dev.to/dashboard" in dev.message

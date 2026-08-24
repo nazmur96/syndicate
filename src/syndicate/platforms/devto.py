@@ -51,8 +51,9 @@ def sanitise_tags(tags: list[str]) -> tuple[list[str], list[str]]:
 
 class DevToClient:
     BASE_URL = "https://dev.to/api"
-    #: Draft articles have no publicly viewable URL, so tracking output points
-    #: the author at the dashboard instead.
+    #: Creating a draft does return a URL, but on a throwaway "-temp-slug-N"
+    #: path that changes on publish, so tracking output always names the
+    #: dashboard as the stable place to review drafts.
     DASHBOARD_URL = "https://dev.to/dashboard"
 
     def __init__(self, api_key: str, transport: Transport | None = None):
@@ -169,6 +170,16 @@ class DevToClient:
         return self._to_result(
             self._request("PUT", f"/articles/{article_id}", {"article": {"published": True}})
         )
+
+    def unpublished(self) -> list[dict]:
+        """GET /articles/me/unpublished -- the author's drafts.
+
+        Verified against the live API: ``GET /articles/{id}`` is the *public*
+        endpoint and returns 404 for an unpublished article, so this listing is
+        the only way to read a draft back.
+        """
+        resp = self._request("GET", "/articles/me/unpublished")
+        return resp.body if isinstance(resp.body, list) else []
 
     def me(self) -> dict:
         """GET /users/me -- read-only credential check."""

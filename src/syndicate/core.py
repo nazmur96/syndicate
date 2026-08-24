@@ -157,7 +157,6 @@ class Syndicator:
             url = published.url
             action = "published"
         else:
-            # Draft URLs are not directly viewable; point at the dashboard.
             url = (result.url if result else record.url) or self.devto.DASHBOARD_URL
 
         if action == "skipped":
@@ -185,9 +184,11 @@ class Syndicator:
             action=action,
             remote_id=article_id,
             url=url,
-            message=f"dev.to draft {article_id}{note}"
-            if state != "published"
-            else f"published{note}",
+            message=(
+                f"dev.to draft {article_id} -- review at {self.devto.DASHBOARD_URL}{note}"
+                if state != "published"
+                else f"published{note}"
+            ),
         )
 
     # -- LinkedIn ----------------------------------------------------------

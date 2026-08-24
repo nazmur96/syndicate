@@ -123,3 +123,12 @@ def test_non_json_error_body_still_raises_platform_error():
     t = FakeTransport([Response(status_code=500, headers={}, body=None, text="<html>oops")])
     with pytest.raises(PlatformError):
         make_client(t).create_draft(title="T", body_markdown="B", canonical_url="https://c/")
+
+
+def test_unpublished_lists_drafts_from_the_authenticated_endpoint():
+    # GET /articles/{id} is the *public* endpoint and 404s on a draft; the
+    # authenticated listing is the only way to read one back.
+    t = FakeTransport([ok(200, [{"id": 1, "published": False}])])
+    drafts = make_client(t).unpublished()
+    assert t.calls[0]["url"] == "https://dev.to/api/articles/me/unpublished"
+    assert drafts[0]["id"] == 1
