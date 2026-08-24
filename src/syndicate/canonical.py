@@ -56,3 +56,8 @@ def canonical_url(
     base = _base_url(config)
     path = _slug_path(source_path)
     return f"{base}/{path}/" if path else f"{base}/"
+
+
+def slug_path(source_path: str) -> str:
+    """Public alias: repo-relative path -> Pages URL path (no leading slash)."""
+    return _slug_path(source_path)
