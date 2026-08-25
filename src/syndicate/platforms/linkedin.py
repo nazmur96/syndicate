@@ -20,19 +20,30 @@ Verified against those docs:
   * Documented errors include 401 EMPTY_ACCESS_TOKEN, 403 ACCESS_DENIED,
     422 UNPROCESSABLE_ENTITY, 429 TOO_MANY_REQUESTS.
   * A published post is viewable at
-    ``https://www.linkedin.com/feed/update/urn:li:ugcPost:<id>/``.
+    ``https://www.linkedin.com/feed/update/<urn>/``. The docs give the example
+    as ``urn:li:ugcPost:<id>``, but a text post created through this adapter
+    came back as ``urn:li:share:<id>`` and its feed URL resolved. So the URN
+    *type* varies: build the URL from whatever ``x-restli-id`` returns and do
+    not hardcode either form.
+
+Verified live (2026-08-25, one text post to a real member account):
+  * 201 + ``x-restli-id`` carrying the post URN, as documented.
+  * The payload below is accepted as-is for a plain text post.
+  * ``verify_author`` against ``/v2/userinfo`` matches the member URN when the
+    token carries ``openid``/``profile``.
 
 Unverified (flagged rather than guessed):
   * The 3000-character commentary limit is not stated in the Posts API
     reference; it is the documented limit for LinkedIn share commentary
     elsewhere and is applied here as a *local* guard so we fail before the
-    network rather than eating a FIELD_LENGTH_TOO_LONG.
+    network rather than eating a FIELD_LENGTH_TOO_LONG. The one live post was
+    29 characters, so this limit remains untested.
   * Member access tokens are widely documented as lasting 60 days and not
     programmatically refreshable without approved partner access. This adapter
     therefore detects expiry and hands off to the runbook; it never tries to
-    refresh.
-  * This adapter has NOT been exercised against a live LinkedIn account. It is
-    covered by tests against a fake transport only.
+    refresh. (An issued token did report ``expires_in=5183999``, i.e. 60 days.)
+  * Every error path. No 401, 403, 422, or 429 has been seen from the live API;
+    those branches are covered by fake-transport tests only.
 """
 
 from __future__ import annotations

@@ -119,16 +119,22 @@ Worth being explicit about, because the two adapters are not equally trusted:
 | | read path | write path |
 |---|---|---|
 | **dev.to** | **Live-verified.** | **Live-verified.** Draft creation, update, and publish were exercised against the real API. |
-| **LinkedIn** | **Live-verified.** `verify_author()` authenticates against `/v2/userinfo` and matches the member URN. | **Mock-tested only.** Written against the documented Posts API and covered by tests against a fake transport. `create_post` has never run — no post has ever been made. |
+| **LinkedIn** | **Live-verified.** `verify_author()` authenticates against `/v2/userinfo` and matches the member URN. | **Live-verified, once.** One text post to a real account: `201` with the URN in `x-restli-id`, and the feed URL resolved. |
 
-The distinction matters: a working credential check proves the token and URN
-are real, and proves nothing whatsoever about the request body `create_post`
-sends. The LinkedIn adapter's module docstring marks which of its behaviours
-come from the API reference and which are inference — the commentary character
-limit and the URL shape of a published post are both still unconfirmed.
+"Once" is doing real work in that cell. What a single 29-character post
+establishes is that the happy path is wired correctly end to end. What it does
+not establish: the 3000-character commentary guard (still an inference from
+LinkedIn's share limits, not the Posts API reference), and every error branch —
+no live 401, 403, 422, or 429 has ever been seen, so all of those are covered
+by fake-transport tests alone.
 
-Treat the first live post as a test, and remember it cannot be edited or
-deleted through this tool once it lands.
+That first post also settled one documented detail the wrong way round: the API
+reference gives the viewable URL as `urn:li:ugcPost:<id>`, but the post came
+back as `urn:li:share:<id>`. The URL is built from whatever `x-restli-id`
+returns, so both work — don't "fix" it by hardcoding either form.
+
+Remember that a LinkedIn post cannot be edited or deleted through this tool
+once it lands. Removing one means doing it from the LinkedIn UI.
 
 Deliberately out of scope: Medium and X.
 
