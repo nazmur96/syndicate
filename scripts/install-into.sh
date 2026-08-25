@@ -4,13 +4,15 @@
 #
 #   scripts/install-into.sh OWNER/REPO [--token-check]
 #
-# Does three things the manual route makes you do by hand:
+# Does what the manual route makes you do by hand:
 #   1. writes .github/workflows/syndicate.yml, with the owner and the repo's
 #      actual default branch filled in (not every repo is on `main`);
-#   2. copies DEVTO_API_KEY / LINKEDIN_ACCESS_TOKEN / LINKEDIN_PERSON_URN from
+#   2. adds a CLAUDE.md section describing the per-post workflow, so an agent
+#      working in that repo knows the rules without being told;
+#   3. copies DEVTO_API_KEY / LINKEDIN_ACCESS_TOKEN / LINKEDIN_PERSON_URN from
 #      your local .env into that repo's Actions secrets, and
 #      LINKEDIN_TOKEN_ISSUED_AT into its Actions variables;
-#   3. with --token-check, also installs the weekly expiry reminder. Install
+#   4. with --token-check, also installs the weekly expiry reminder. Install
 #      that in ONE repo only -- the token is the same everywhere, so N copies
 #      raise N identical issues for a single re-authorisation.
 #
@@ -56,16 +58,23 @@ echo "Installing into $REPO (default branch: $BRANCH)"
 
 # -- 1. workflow files ------------------------------------------------------
 
+# Files go in over git, not the contents API. The API refuses to write anything
+# under .github/workflows/ unless the token carries the `workflow` OAuth scope,
+# which `gh auth login` does not grant by default; a git push over SSH is not
+# subject to that restriction. Clone once, write everything, push once.
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+git clone --quiet --depth 1 "git@github.com:$REPO.git" "$WORK/repo" 2>/dev/null \
+  || git clone --quiet --depth 1 "https://github.com/$REPO.git" "$WORK/repo"
+
 put_file() {
-  local path="$1" content="$2" message="$3" sha args
-  sha="$(gh api "repos/$REPO/contents/$path" --jq .sha 2>/dev/null || true)"
-  args=(-X PUT "repos/$REPO/contents/$path"
-        -f message="$message"
-        -f branch="$BRANCH"
-        -f content="$(printf '%s' "$content" | base64 -w0)")
-  [ -n "$sha" ] && args+=(-f sha="$sha")
-  gh api "${args[@]}" --jq '.commit.sha' >/dev/null
-  echo "  ${sha:+updated }${sha:-created }$path"
+  local path="$1" content="$2"
+  mkdir -p "$WORK/repo/$(dirname "$path")"
+  local verb=created
+  [ -f "$WORK/repo/$path" ] && verb=updated
+  printf '%s\n' "$content" > "$WORK/repo/$path"
+  echo "  $verb $path"
 }
 
 syndicate_yml="$(sed \
@@ -75,7 +84,7 @@ syndicate_yml="$(sed \
   -e "s|OWNER/syndicate|$OWNER/syndicate|" \
   -e "s|branches: \[main\]|branches: [$BRANCH]|" \
   "$HERE/templates/syndicate.yml")"
-put_file ".github/workflows/syndicate.yml" "$syndicate_yml" "chore: install syndicate workflow"
+put_file ".github/workflows/syndicate.yml" "$syndicate_yml"
 
 if [ "$WANT_TOKEN_CHECK" = "--token-check" ]; then
   token_yml="$(sed \
@@ -84,10 +93,48 @@ if [ "$WANT_TOKEN_CHECK" = "--token-check" ]; then
 # Weekly check; opens an issue when the LinkedIn token nears its 60-day expiry.' \
     -e "s|OWNER/syndicate|$OWNER/syndicate|" \
     "$HERE/templates/linkedin-token-check.yml")"
-  put_file ".github/workflows/linkedin-token-check.yml" "$token_yml" "chore: install LinkedIn token check"
+  put_file ".github/workflows/linkedin-token-check.yml" "$token_yml"
 fi
 
-# -- 2. secrets and the issued-at variable ----------------------------------
+# -- 2. CLAUDE.md guidance --------------------------------------------------
+#
+# An agent working in the *consuming* repo cannot see this repo's docs, so the
+# rules that matter there -- opt-in frontmatter, the manual publish gate, the
+# absolute-link requirement -- have to travel with the workflow.
+
+claude_md="$(sed -n '/^```markdown$/,/^```$/p' "$HERE/docs/CLAUDE.md.snippet.md" \
+             | sed '1d;$d' | sed "s|OWNER/REPO|$REPO|g")"
+
+if [ -z "$claude_md" ]; then
+  echo "  WARNING: could not extract the CLAUDE.md snippet; skipping." >&2
+else
+  if [ -f "$WORK/repo/CLAUDE.md" ] && grep -q '^## Syndication' "$WORK/repo/CLAUDE.md"; then
+    echo "  CLAUDE.md already documents syndication; left alone"
+  elif [ -f "$WORK/repo/CLAUDE.md" ]; then
+    put_file "CLAUDE.md" "$(cat "$WORK/repo/CLAUDE.md")
+
+$claude_md"
+  else
+    put_file "CLAUDE.md" "$claude_md"
+  fi
+fi
+
+# -- commit and push whatever changed ---------------------------------------
+
+if [ -n "$(git -C "$WORK/repo" status --porcelain)" ]; then
+  git -C "$WORK/repo" add -A
+  git -C "$WORK/repo" commit --quiet -m 'chore: install syndicate
+
+Push creates a dev.to draft only; LinkedIn posting stays behind the manual
+publish run. Nothing syndicates until a document opts in with a crosspost:
+frontmatter block.'
+  git -C "$WORK/repo" push --quiet origin "HEAD:$BRANCH"
+  echo "  pushed $(git -C "$WORK/repo" rev-parse --short HEAD)"
+else
+  echo "  files already up to date; nothing to push"
+fi
+
+# -- 3. secrets and the issued-at variable ----------------------------------
 
 set -a; . "$ENV_FILE"; set +a
 

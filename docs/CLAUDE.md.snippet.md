@@ -10,7 +10,20 @@ It is written for an agent working *in that repo*, not in this one.
 
 Documents in this repo can be cross-posted to dev.to and LinkedIn by
 `.github/workflows/syndicate.yml`. Canonical URLs always point back at this
-repo's GitHub Pages site, never at dev.to.
+repo, never at dev.to.
+
+### Write internal links absolute
+
+Relative markdown links are rewritten to a **GitHub Pages** URL. If this repo
+has no Pages site, every one of them becomes a dead link in the published copy,
+and the default `canonical_url` is dead too. Until Pages exists here:
+
+- write internal links in full (`https://github.com/OWNER/REPO/blob/main/docs/other.md`)
+  — absolute URLs pass through the renderer untouched; and
+- set `canonical_url:` in the `crosspost:` block to the document's own blob URL.
+
+Check with `syndicate draft <path> --dry-run` and grep the output for
+`github.io`. Any hit is a link that will 404.
 
 ### Opting a document in
 
