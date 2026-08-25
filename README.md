@@ -116,13 +116,19 @@ Exit codes: `0` fine, `1` a platform failed, `2` an authoring error. (For
 
 Worth being explicit about, because the two adapters are not equally trusted:
 
-| | status |
-|---|---|
-| **dev.to** | **Live-verified.** Draft creation, update, and publish were exercised against the real API. |
-| **LinkedIn** | **Mock-tested only.** Written against the documented Posts API and covered by tests against a fake transport. It has never touched a live LinkedIn account. |
+| | read path | write path |
+|---|---|---|
+| **dev.to** | **Live-verified.** | **Live-verified.** Draft creation, update, and publish were exercised against the real API. |
+| **LinkedIn** | **Live-verified.** `verify_author()` authenticates against `/v2/userinfo` and matches the member URN. | **Mock-tested only.** Written against the documented Posts API and covered by tests against a fake transport. `create_post` has never run — no post has ever been made. |
 
-The LinkedIn adapter's module docstring marks which of its behaviours come from
-the API reference and which are inference. Treat the first live post as a test.
+The distinction matters: a working credential check proves the token and URN
+are real, and proves nothing whatsoever about the request body `create_post`
+sends. The LinkedIn adapter's module docstring marks which of its behaviours
+come from the API reference and which are inference — the commentary character
+limit and the URL shape of a published post are both still unconfirmed.
+
+Treat the first live post as a test, and remember it cannot be edited or
+deleted through this tool once it lands.
 
 Deliberately out of scope: Medium and X.
 
