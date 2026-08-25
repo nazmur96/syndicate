@@ -97,8 +97,12 @@ for name in DEVTO_API_KEY LINKEDIN_ACCESS_TOKEN LINKEDIN_PERSON_URN; do
     echo "  skipped $name (empty in .env)"
     continue
   fi
-  printf '%s' "$value" | gh secret set "$name" --repo "$REPO" --body -
-  echo "  secret $name"
+  # No --body: gh reads the value from stdin when the flag is absent. Passing
+  # `--body -` stores a literal "-" -- it looks like a stdin sentinel and is
+  # not one, and the damage is invisible because GitHub then masks every "-"
+  # in your logs as ***.
+  printf '%s' "$value" | gh secret set "$name" --repo "$REPO"
+  echo "  secret $name (${#value} chars)"
 done
 
 if [ -n "${LINKEDIN_TOKEN_ISSUED_AT:-}" ]; then
