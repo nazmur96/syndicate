@@ -3,9 +3,13 @@
     syndicate draft   <paths...>   # what a push runs: dev.to draft, then stop
     syndicate publish <paths...>   # what a manual trigger runs
     syndicate check                # read-only credential check
+    syndicate token-status         # how long the LinkedIn token has left
 
 Exit codes: 0 all good, 1 at least one platform failed (fail-soft: every other
 platform still ran), 2 an authoring error (invalid crosspost block).
+
+``token-status`` reads those codes differently -- 0 fine, 1 expiring soon,
+2 already expired -- because it reports on one thing, not a batch.
 """
 
 from __future__ import annotations
@@ -25,8 +29,18 @@ from .config import (
 )
 from .core import MODE_DRAFT, MODE_PUBLISH, Syndicator
 from .document import CrosspostInvalid, load_document
+from .expiry import (
+    DEFAULT_WARN_DAYS,
+    EXPIRED,
+    PROBE_EXPIRED,
+    PROBE_INCONCLUSIVE,
+    PROBE_VALID,
+    TOKEN_ISSUED_AT,
+    WARNING,
+    token_status,
+)
 from .manifest import DEFAULT_MANIFEST_PATH, Manifest
-from .platforms.base import PlatformError
+from .platforms.base import CredentialError, PlatformError, TokenExpired
 from .platforms.devto import DevToClient
 from .platforms.linkedin import LinkedInClient
 from .render import RenderError, render_full, render_summary
@@ -42,7 +56,7 @@ _ICON = {
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="syndicate", description=__doc__)
-    parser.add_argument("mode", choices=[MODE_DRAFT, MODE_PUBLISH, "check"])
+    parser.add_argument("mode", choices=[MODE_DRAFT, MODE_PUBLISH, "check", "token-status"])
     parser.add_argument("paths", nargs="*", help="markdown files to consider")
     parser.add_argument("--repo-root", default=".")
     parser.add_argument(
@@ -59,6 +73,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dotenv", default=".env")
     parser.add_argument("--linkedin-api-version", default=None)
     parser.add_argument("--dry-run", action="store_true", help="render only, write nothing")
+    parser.add_argument(
+        "--warn-days",
+        type=int,
+        default=DEFAULT_WARN_DAYS,
+        help="token-status: warn this many days before the LinkedIn token lapses",
+    )
+    parser.add_argument("--today", default=None, help="token-status: pin today's date (testing)")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     return parser
 
@@ -109,6 +130,50 @@ def _check(secrets: Secrets, args) -> int:
             print(f"  {LINKEDIN_ACCESS_TOKEN}: FAILED -- {secrets.redact(str(exc))}")
             failed = True
     return 1 if failed else 0
+
+
+def _linkedin_probe(secrets: Secrets, args) -> str | None:
+    """Ask LinkedIn whether the token still works. Never writes anything.
+
+    Returns ``None`` when LinkedIn is not configured at all. A 401/403 on
+    ``/v2/userinfo`` is *inconclusive*, not a failure: a ``w_member_social``-only
+    token cannot read that endpoint even while perfectly healthy.
+    """
+    if not (secrets.has(LINKEDIN_ACCESS_TOKEN) and secrets.has(LINKEDIN_PERSON_URN)):
+        return None
+    client = LinkedInClient(
+        secrets.require(LINKEDIN_ACCESS_TOKEN),
+        secrets.require(LINKEDIN_PERSON_URN),
+        api_version=args.linkedin_api_version,
+    )
+    try:
+        return PROBE_VALID if client.verify_author() else PROBE_INCONCLUSIVE
+    except TokenExpired:
+        return PROBE_EXPIRED
+    except (CredentialError, PlatformError, ValueError):
+        return PROBE_INCONCLUSIVE
+
+
+def _token_status(secrets: Secrets, args) -> int:
+    from datetime import date
+
+    probe = _linkedin_probe(secrets, args)
+    try:
+        status = token_status(
+            issued_at=secrets.get(TOKEN_ISSUED_AT),
+            probe=probe,
+            warn_days=args.warn_days,
+            today=date.fromisoformat(args.today) if args.today else None,
+        )
+    except ValueError as exc:
+        print(f"error: {secrets.redact(str(exc))}", file=sys.stderr)
+        return 2
+
+    if args.json:
+        print(json.dumps(status.as_dict(), indent=2))
+    else:
+        print(f"  linkedin token: {status.status} -- {secrets.redact(status.message)}")
+    return {WARNING: 1, EXPIRED: 2}.get(status.status, 0)
 
 
 def _dry_run(args, canonical_config, paths) -> int:
@@ -190,6 +255,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.mode == "check":
         return _check(secrets, args)
+    if args.mode == "token-status":
+        return _token_status(secrets, args)
 
     canonical_config = CanonicalConfig(
         repository=args.repository, pages_base_url=args.pages_base_url

@@ -91,3 +91,84 @@ def test_repository_defaults_to_github_repository_env(tmp_path, monkeypatch, cap
         "--dry-run", "--dotenv", str(tmp_path / "none"), str(doc(tmp_path)),
     ])
     assert "acme.github.io/from-env" in capsys.readouterr().out
+
+
+# -- token-status ---------------------------------------------------------
+#
+# The weekly cron reads this command's JSON, so its shape is part of the
+# contract with .github/workflows/linkedin-token-check.yml.
+
+
+class FakeLinkedIn:
+    def __init__(self, *args, verdict=True, **kwargs):
+        self._verdict = verdict
+
+    def verify_author(self):
+        if isinstance(self._verdict, Exception):
+            raise self._verdict
+        return self._verdict
+
+
+def _with_linkedin(monkeypatch, verdict=True):
+    from syndicate import cli
+
+    monkeypatch.setattr(cli, "LinkedInClient", lambda *a, **k: FakeLinkedIn(verdict=verdict))
+    monkeypatch.setenv("LINKEDIN_ACCESS_TOKEN", "token-value")
+    monkeypatch.setenv("LINKEDIN_PERSON_URN", "urn:li:person:abc")
+
+
+def test_token_status_without_linkedin_configured_is_not_a_failure(tmp_path, capsys, monkeypatch):
+    monkeypatch.delenv("LINKEDIN_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("LINKEDIN_PERSON_URN", raising=False)
+    code = main(["token-status", "--dotenv", str(tmp_path / "none")])
+    assert code == 0
+    assert "not_configured" in capsys.readouterr().out
+
+
+def test_token_status_warns_and_exits_one_inside_the_window(tmp_path, capsys, monkeypatch):
+    _with_linkedin(monkeypatch)
+    monkeypatch.setenv("LINKEDIN_TOKEN_ISSUED_AT", "2026-07-01")
+    code = main([
+        "token-status", "--dotenv", str(tmp_path / "none"), "--today", "2026-08-25", "--json",
+    ])
+    assert code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "warning"
+    assert payload["days_remaining"] == 5
+
+
+def test_token_status_is_ok_and_exits_zero_when_fresh(tmp_path, capsys, monkeypatch):
+    _with_linkedin(monkeypatch)
+    monkeypatch.setenv("LINKEDIN_TOKEN_ISSUED_AT", "2026-08-20")
+    code = main([
+        "token-status", "--dotenv", str(tmp_path / "none"), "--today", "2026-08-25", "--json",
+    ])
+    assert code == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "ok"
+
+
+def test_token_status_exits_two_when_the_token_is_already_dead(tmp_path, capsys, monkeypatch):
+    from syndicate.platforms.base import TokenExpired
+
+    _with_linkedin(monkeypatch, verdict=TokenExpired("LinkedIn token expired"))
+    code = main([
+        "token-status", "--dotenv", str(tmp_path / "none"), "--today", "2026-08-25", "--json",
+    ])
+    assert code == 2
+    assert json.loads(capsys.readouterr().out)["status"] == "expired"
+
+
+def test_token_status_never_leaks_the_token_value(tmp_path, capsys, monkeypatch):
+    from syndicate.platforms.base import CredentialError
+
+    _with_linkedin(monkeypatch, verdict=CredentialError("bad token token-value"))
+    main(["token-status", "--dotenv", str(tmp_path / "none"), "--today", "2026-08-25"])
+    assert "token-value" not in capsys.readouterr().out
+
+
+def test_token_status_without_a_recorded_date_is_unknown(tmp_path, capsys, monkeypatch):
+    _with_linkedin(monkeypatch)
+    monkeypatch.delenv("LINKEDIN_TOKEN_ISSUED_AT", raising=False)
+    code = main(["token-status", "--dotenv", str(tmp_path / "none"), "--json"])
+    assert code == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "unknown"
