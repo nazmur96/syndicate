@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from .platforms.base import TransportError
+
 
 @dataclass
 class Response:
@@ -48,9 +50,14 @@ class RequestsTransport:
         self._timeout = timeout
 
     def request(self, method, url, *, headers=None, json=None, timeout=None) -> Response:
-        resp = self._session.request(
-            method, url, headers=headers, json=json, timeout=timeout or self._timeout
-        )
+        import requests
+
+        try:
+            resp = self._session.request(
+                method, url, headers=headers, json=json, timeout=timeout or self._timeout
+            )
+        except requests.RequestException as exc:
+            raise TransportError(f"{method} {url} failed: {exc}") from exc
         try:
             body = resp.json()
         except ValueError:

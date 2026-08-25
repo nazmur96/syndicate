@@ -15,6 +15,14 @@ class PlatformError(Exception):
     """Any adapter failure. Caught per platform by the orchestrator."""
 
 
+class TransportError(PlatformError):
+    """The request never got an answer -- DNS, TLS, timeout, connection reset.
+
+    A PlatformError so that a network blip fails one platform soft rather than
+    escaping as a raw requests exception and taking the whole run with it.
+    """
+
+
 class CredentialError(PlatformError):
     """Missing, rejected, or expired credentials."""
 
