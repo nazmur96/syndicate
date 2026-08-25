@@ -33,7 +33,8 @@ the repo's GitHub Pages site, so the copies do not compete with the original.
 
 ## Install
 
-Two files in the consuming repo, and account-level secrets set once:
+Two files in the consuming repo, plus the secrets (organisation-wide if you
+want to set them once — see [docs/SETUP.md](docs/SETUP.md#3-store-the-credentials)):
 
 ```yaml
 # .github/workflows/syndicate.yml

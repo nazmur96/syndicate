@@ -1,9 +1,9 @@
 """Credential loading.
 
 Precedence: real environment first (that is how GitHub Actions injects
-account-level secrets), then a gitignored local ``.env`` for testing. Values are
-never written to disk, never logged, and ``repr`` is redacted so a stray
-traceback cannot leak them.
+organisation or repository secrets), then a gitignored local ``.env`` for
+testing. Values are never written to disk, never logged, and ``repr`` is
+redacted so a stray traceback cannot leak them.
 """
 
 from __future__ import annotations

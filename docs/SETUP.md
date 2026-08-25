@@ -3,9 +3,11 @@
 One-time credential setup, then the two files a consuming repo needs, then the
 runbook for the LinkedIn re-auth you will have to do roughly six times a year.
 
-Budget about twenty minutes for the first repo. Every repo after that is two
-files and no credentials, because the secrets live at the account or
-organisation level, not in each repo.
+Budget about twenty minutes for the first repo. If you put your repos in a
+GitHub organisation, every repo after that is two files and no credentials,
+because org secrets are inherited. On a personal account each repo needs its
+own copy of the secrets — step 3 explains the trade-off before you commit to
+one.
 
 ---
 
@@ -16,8 +18,8 @@ organisation level, not in each repo.
 3. Copy it now. dev.to shows it once.
 
 The key is not scoped and does not expire. It can publish, edit, and delete
-articles on your account, so treat it as a full-account credential: account-level
-GitHub secret, never a repo file, never a log line.
+articles on your account, so treat it as a full-account credential: a GitHub
+secret (see step 3 for which scope), never a repo file, never a log line.
 
 Rate limit: **10 requests per 30 seconds**. The adapter honours `Retry-After`,
 and one document costs at most three requests, so this only becomes real if you
@@ -85,8 +87,33 @@ This adapter posts to a personal profile only. Posting as an organisation needs
 
 ## 3. Store the credentials
 
-Set these once, at the account or organisation level, so every repo inherits
-them (GitHub: *Settings → Secrets and variables → Actions*).
+### Decide where first — this one is hard to undo
+
+GitHub Actions has exactly three secret scopes: **organisation**, **repository**,
+and **environment**. There is *no* personal-account-wide secret store for
+Actions. (The user-level secrets you may have seen in *Settings → Codespaces*
+are a different system and are not readable by workflows.)
+
+That leaves two real options, and the difference compounds:
+
+| | where secrets live | cost of the 60-day LinkedIn re-auth |
+|---|---|---|
+| **A free GitHub organisation**, repos inside it | one org secret, inherited by every repo | update **once** |
+| **A personal account** | a separate copy in every consuming repo | update **in every repo**, by hand, every 60 days |
+
+Option A is worth the ten minutes it takes to make an org and move the repos,
+and it gets better with each repo you add. Under option B the re-auth runbook at
+the bottom of this page grows a step per consuming repo, and a token you forget
+to update somewhere fails silently on that repo's next publish.
+
+An organisation here is only about *where the secrets live*. It does not change
+who the posts come from — this tool posts to a personal LinkedIn profile either
+way (see the note at the end of step 2c).
+
+### The values
+
+Org secrets: *Organisation → Settings → Secrets and variables → Actions*.
+Repo secrets: *Repository → Settings → Secrets and variables → Actions*.
 
 **Secrets:**
 
@@ -172,15 +199,19 @@ publishing carry on; the orchestrator fails soft per platform. Nothing is queued
 or retried — a document whose LinkedIn post failed stays unposted until you
 publish it again.
 
-**Steps** (about three minutes):
+**Steps** (about three minutes on org secrets; three minutes *per repo* if you
+went with per-repository secrets in step 3):
 
 1. Redo **step 2b** above. Same app, same authorisation URL — you do *not* need
    a new app, new products, or a new client secret.
-2. Update the `LINKEDIN_ACCESS_TOKEN` secret with the new token.
-3. Update the `LINKEDIN_TOKEN_ISSUED_AT` variable to today's date. **This is the
-   step people skip**, and skipping it means the warning is computed from a
-   stale date and fires at the wrong time — or, worse, the status goes `unknown`
-   and stops telling you anything.
+2. Update the `LINKEDIN_ACCESS_TOKEN` secret with the new token — **everywhere
+   it lives**. On org secrets that is one place. On per-repository secrets it is
+   every consuming repo, and the one you miss will not complain until its next
+   publish, because the weekly check only reads the repo it runs in.
+3. Update the `LINKEDIN_TOKEN_ISSUED_AT` variable to today's date, in the same
+   places. **This is the step people skip**, and skipping it means the warning is
+   computed from a stale date and fires at the wrong time — or, worse, the status
+   goes `unknown` and stops telling you anything.
 4. Verify:
    ```bash
    syndicate token-status
