@@ -1,0 +1,170 @@
+# Reusable syndication workflow.
+#
+# Consuming repos do not copy this file -- they call it, with a ~15-line caller
+# workflow (see templates/syndicate.yml). Everything version-sensitive lives
+# here, so a fix ships to every consumer by moving the v1 tag.
+#
+# Two modes, and the difference between them is the human gate:
+#
+#   draft   -- creates/updates a dev.to *draft* and stops. LinkedIn is never
+#              contacted. Safe to run on every push.
+#   publish -- publishes the dev.to draft and posts the LinkedIn summary. Manual
+#              only, and it REQUIRES an explicit `paths` input: "publish
+#              everything that happens to be drafted" is not a thing a person
+#              means, and LinkedIn posts cannot be taken back or edited.
+#
+# The manifest (.syndicate/manifest.json) is committed back to the calling repo.
+# That committed file *is* the idempotency record -- without it, a re-run
+# double-posts.
+
+name: Syndicate
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: 'draft (dev.to draft only) or publish (dev.to live + LinkedIn)'
+        type: string
+        default: draft
+      paths:
+        description: >
+          Whitespace- or comma-separated markdown paths. Optional in draft mode
+          (defaults to the files the push touched); REQUIRED in publish mode.
+        type: string
+        default: ''
+      pages-base-url:
+        description: 'Canonical base URL, if the repo is not on the default github.io domain'
+        type: string
+        default: ''
+      syndicate-repository:
+        description: 'Where this tool lives; override only when running a fork'
+        type: string
+        default: OWNER/syndicate
+      syndicate-ref:
+        description: 'Tag/branch of the syndicate tool to run'
+        type: string
+        default: v1
+      python-version:
+        type: string
+        default: '3.12'
+      commit-manifest:
+        description: 'Commit the updated manifest back. Turn off only for a trial run.'
+        type: boolean
+        default: true
+    secrets:
+      DEVTO_API_KEY:
+        required: false
+      LINKEDIN_ACCESS_TOKEN:
+        required: false
+      LINKEDIN_PERSON_URN:
+        required: false
+
+jobs:
+  syndicate:
+    runs-on: ubuntu-latest
+    # The caller's `permissions:` block caps these; contents:write is what lets
+    # the manifest be committed back.
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the calling repository
+        uses: actions/checkout@v4
+        with:
+          # Full history: the push range is how draft mode works out which
+          # documents actually changed.
+          fetch-depth: 0
+
+      - name: Check out the syndicate tool
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.syndicate-repository }}
+          ref: ${{ inputs.syndicate-ref }}
+          path: .syndicate-tool
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install
+        run: pip install --disable-pip-version-check ./.syndicate-tool
+
+      - name: Work out which documents to consider
+        id: select
+        # Inputs go through env, never interpolated into the script body: a
+        # branch or input containing shell metacharacters must not run as code.
+        env:
+          MODE: ${{ inputs.mode }}
+          INPUT_PATHS: ${{ inputs.paths }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_PATHS// /}" ]; then
+            printf '%s' "$INPUT_PATHS" | tr ' ,\t' '\n\n\n' | sed '/^$/d' > /tmp/candidates
+          elif [ "$MODE" = publish ]; then
+            echo "::error::publish mode needs an explicit 'paths' input -- name the document you mean to publish."
+            exit 1
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            git diff --name-only --diff-filter=d "$BEFORE" "$SHA" -- '*.md' > /tmp/candidates
+          else
+            # First push of a branch, or a manual draft run: consider everything.
+            # Opt-in frontmatter and the manifest are what keep this cheap.
+            git ls-files '*.md' > /tmp/candidates
+          fi
+
+          : > /tmp/paths
+          while IFS= read -r f; do
+            [ -n "$f" ] && [ -f "$f" ] && printf '%s\n' "$f" >> /tmp/paths
+          done < /tmp/candidates
+
+          count=$(wc -l < /tmp/paths | tr -d ' ')
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "Considering $count markdown file(s):"
+          sed 's/^/  /' /tmp/paths
+
+      - name: Syndicate
+        id: run
+        if: steps.select.outputs.count != '0'
+        env:
+          DEVTO_API_KEY: ${{ secrets.DEVTO_API_KEY }}
+          LINKEDIN_ACCESS_TOKEN: ${{ secrets.LINKEDIN_ACCESS_TOKEN }}
+          LINKEDIN_PERSON_URN: ${{ secrets.LINKEDIN_PERSON_URN }}
+          SYNDICATE_PAGES_BASE_URL: ${{ inputs.pages-base-url }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          set -uo pipefail
+          mapfile -t FILES < /tmp/paths
+          # Fail-soft is the point: one platform erroring must not stop the
+          # other, so the exit code is carried past the manifest commit below
+          # rather than ending the job here.
+          set +e
+          syndicate "$MODE" "${FILES[@]}" --dotenv /dev/null
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Commit the manifest
+        if: inputs.commit-manifest && steps.select.outputs.count != '0'
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain -- .syndicate/manifest.json)" ]; then
+            echo "Manifest unchanged; nothing to commit."
+            exit 0
+          fi
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .syndicate/manifest.json
+          git commit -m 'chore(syndicate): record syndication state [skip ci]'
+          # A concurrent push during the run is normal; rebase once rather than
+          # losing the record, because an uncommitted manifest means a re-run
+          # posts the same document twice.
+          git push || { git pull --rebase --autostash && git push; }
+
+      - name: Report the platform outcome
+        if: steps.select.outputs.count != '0'
+        env:
+          CODE: ${{ steps.run.outputs.exit_code }}
+        run: |
+          case "$CODE" in
+            0) echo "All platforms succeeded." ;;
+            2) echo "::error::A document's crosspost block is invalid -- fix the frontmatter."; exit 1 ;;
+            *) echo "::error::At least one platform failed; see the job summary."; exit 1 ;;
+          esac

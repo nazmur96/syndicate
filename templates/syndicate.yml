@@ -1,0 +1,23 @@
+# Drop this in as .github/workflows/syndicate.yml, replace OWNER, done.
+name: Syndicate
+on:
+  push:
+    branches: [main]
+    paths: ['**/*.md']
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [draft, publish]
+        default: draft
+      paths:
+        description: 'Required to publish: the document to publish'
+permissions:
+  contents: write
+jobs:
+  syndicate:
+    uses: OWNER/syndicate/.github/workflows/syndicate.yml@v1
+    with:
+      mode: ${{ inputs.mode || 'draft' }}
+      paths: ${{ inputs.paths || '' }}
+    secrets: inherit

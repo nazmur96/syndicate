@@ -1,0 +1,14 @@
+# Drop this in as .github/workflows/linkedin-token-check.yml, replace OWNER.
+# Only needed if the repo posts to LinkedIn.
+name: LinkedIn token check
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Mondays, 09:00 UTC
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+jobs:
+  check:
+    uses: OWNER/syndicate/.github/workflows/linkedin-token-check.yml@v1
+    secrets: inherit

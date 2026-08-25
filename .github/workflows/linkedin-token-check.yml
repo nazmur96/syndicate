@@ -1,0 +1,119 @@
+# Weekly LinkedIn token expiry warning (reusable).
+#
+# A LinkedIn member access token lasts 60 days and cannot be refreshed
+# programmatically -- re-authorising is a human sitting down and doing the OAuth
+# flow. The failure mode without this workflow is silent: the token lapses, and
+# you find out the next time you try to publish something, which is exactly the
+# moment you did not want to discover it.
+#
+# So: check weekly, and raise a GitHub issue while there is still time to act.
+# The cron itself lives in the caller (templates/linkedin-token-check.yml),
+# because a schedule only fires in the repository that declares it.
+
+name: LinkedIn token check
+
+on:
+  workflow_call:
+    inputs:
+      token-issued-at:
+        description: >
+          Date the current token was issued (YYYY-MM-DD). Defaults to the
+          caller's LINKEDIN_TOKEN_ISSUED_AT repository variable.
+        type: string
+        default: ''
+      warn-days:
+        description: 'Days of warning before expiry'
+        type: number
+        default: 14
+      syndicate-repository:
+        type: string
+        default: OWNER/syndicate
+      syndicate-ref:
+        type: string
+        default: v1
+    secrets:
+      LINKEDIN_ACCESS_TOKEN:
+        required: false
+      LINKEDIN_PERSON_URN:
+        required: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out the syndicate tool
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.syndicate-repository }}
+          ref: ${{ inputs.syndicate-ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install
+        run: pip install --disable-pip-version-check .
+
+      - name: Check the token
+        id: check
+        env:
+          LINKEDIN_ACCESS_TOKEN: ${{ secrets.LINKEDIN_ACCESS_TOKEN }}
+          LINKEDIN_PERSON_URN: ${{ secrets.LINKEDIN_PERSON_URN }}
+          LINKEDIN_TOKEN_ISSUED_AT: ${{ inputs.token-issued-at || vars.LINKEDIN_TOKEN_ISSUED_AT }}
+          WARN_DAYS: ${{ inputs.warn-days }}
+        run: |
+          set -uo pipefail
+          # Exit code is the verdict (0 fine / 1 expiring / 2 expired), so it is
+          # captured rather than allowed to end the job.
+          syndicate token-status --json --warn-days "$WARN_DAYS" --dotenv /dev/null > /tmp/status.json
+          echo "status=$(jq -r .status /tmp/status.json)" >> "$GITHUB_OUTPUT"
+          {
+            echo 'message<<EOF'
+            jq -r .message /tmp/status.json
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+          cat /tmp/status.json
+
+      - name: Summarise
+        env:
+          STATUS: ${{ steps.check.outputs.status }}
+          MESSAGE: ${{ steps.check.outputs.message }}
+        run: |
+          printf '### LinkedIn token: `%s`\n\n%s\n' "$STATUS" "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Raise or update the re-auth issue
+        if: contains(fromJSON('["warning","expired","unknown"]'), steps.check.outputs.status)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS: ${{ steps.check.outputs.status }}
+          MESSAGE: ${{ steps.check.outputs.message }}
+          RUNBOOK: https://github.com/${{ inputs.syndicate-repository }}/blob/${{ inputs.syndicate-ref }}/docs/SETUP.md#linkedin-re-auth-runbook
+          TITLE: 'LinkedIn access token needs re-authorising'
+        run: |
+          set -euo pipefail
+          body=$(printf '%s\n\n**Status:** `%s`\n\nRe-auth runbook: %s\n\nClose this issue once `LINKEDIN_ACCESS_TOKEN` and the `LINKEDIN_TOKEN_ISSUED_AT` variable have both been updated.' "$MESSAGE" "$STATUS" "$RUNBOOK")
+          existing=$(gh issue list --state open --search "$TITLE in:title" --json number,title \
+            --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+          if [ -n "$existing" ]; then
+            # One issue per lapse, commented on weekly -- a new issue every Monday
+            # is how a reminder turns into noise people filter out.
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$TITLE" --body "$body"
+          fi
+
+      - name: Close the re-auth issue once the token is healthy
+        if: contains(fromJSON('["ok","not_configured"]'), steps.check.outputs.status)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: 'LinkedIn access token needs re-authorising'
+        run: |
+          set -euo pipefail
+          existing=$(gh issue list --state open --search "$TITLE in:title" --json number,title \
+            --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+          if [ -n "$existing" ]; then
+            gh issue close "$existing" --comment 'The LinkedIn token is healthy again; closing.'
+          fi
