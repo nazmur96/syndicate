@@ -27,7 +27,7 @@ on:
         default: 14
       syndicate-repository:
         type: string
-        default: OWNER/syndicate
+        default: nazmur96/syndicate
       syndicate-ref:
         type: string
         default: v1

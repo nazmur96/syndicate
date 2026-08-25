@@ -39,7 +39,7 @@ on:
       syndicate-repository:
         description: 'Where this tool lives; override only when running a fork'
         type: string
-        default: OWNER/syndicate
+        default: nazmur96/syndicate
       syndicate-ref:
         description: 'Tag/branch of the syndicate tool to run'
         type: string
