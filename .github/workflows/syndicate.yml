@@ -100,7 +100,10 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "${INPUT_PATHS// /}" ]; then
-            printf '%s' "$INPUT_PATHS" | tr ' ,\t' '\n\n\n' | sed '/^$/d' > /tmp/candidates
+            # printf '%s\n', not '%s': an unterminated final line makes the
+            # `while read` below exit before running its body, so the last path
+            # -- the only path, when one is given -- is silently dropped.
+            printf '%s\n' "$INPUT_PATHS" | tr ' ,\t' '\n\n\n' | sed '/^$/d' > /tmp/candidates
           elif [ "$MODE" = publish ]; then
             echo "::error::publish mode needs an explicit 'paths' input -- name the document you mean to publish."
             exit 1
