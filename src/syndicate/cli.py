@@ -199,6 +199,11 @@ def _dry_run(args, canonical_config, paths) -> int:
             print(f"\n--- dev.to ({doc.crosspost.devto}) ---\n{body}")
         if doc.crosspost.linkedin:
             print(f"\n--- linkedin ---\n{render_summary(doc, canonical, site_base)}")
+            image = doc.crosspost.linkedin_image
+            if image is not None:
+                image_path = Path(args.repo_root) / Path(doc.source_path).parent / image.path
+                status = "" if image_path.is_file() else "  MISSING -- publish will fail"
+                print(f"\n[image: {image.path}{status}]\n[alt: {image.alt}]")
         print()
     return 0
 

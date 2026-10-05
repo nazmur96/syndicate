@@ -96,3 +96,22 @@ def test_load_document_reads_from_disk(tmp_path):
     doc = load_document(p, repo_root=tmp_path)
     assert doc.source_path == "post.md"
     assert doc.title == "T"
+
+
+def test_linkedin_image_is_parsed():
+    src = (
+        "---\ntitle: T\ncrosspost:\n  linkedin: summary\n"
+        "  linkedin_image:\n    path: img/flow.png\n    alt: A flow diagram\n---\n\nBody.\n"
+    )
+    image = parse_document(src, "posts/p.md").crosspost.linkedin_image
+    assert image.path == "img/flow.png"
+    assert image.alt == "A flow diagram"
+
+
+def test_linkedin_image_without_alt_text_hard_fails():
+    src = (
+        "---\ntitle: T\ncrosspost:\n  linkedin: summary\n"
+        "  linkedin_image:\n    path: img/flow.png\n---\n\nBody.\n"
+    )
+    with pytest.raises(CrosspostInvalid, match="alt"):
+        parse_document(src, "posts/p.md")

@@ -44,6 +44,17 @@ CROSSPOST_SCHEMA: dict = {
             "items": {"type": "string", "minLength": 1},
         },
         "canonical_url": {"type": "string", "format": "uri"},
+        # One image attached to the LinkedIn post. `path` is relative to the
+        # document's directory; alt text is required, not optional politeness.
+        "linkedin_image": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["path", "alt"],
+            "properties": {
+                "path": {"type": "string", "minLength": 1},
+                "alt": {"type": "string", "minLength": 1},
+            },
+        },
     },
 }
 
@@ -55,6 +66,12 @@ class CrosspostInvalid(Exception):
 
 
 @dataclass(frozen=True)
+class LinkedInImage:
+    path: str
+    alt: str
+
+
+@dataclass(frozen=True)
 class CrosspostSpec:
     devto: str | bool = False
     linkedin: str | bool = False
@@ -63,6 +80,7 @@ class CrosspostSpec:
     summary: str | None = None
     hashtags: list[str] = field(default_factory=list)
     canonical_url: str | None = None
+    linkedin_image: LinkedInImage | None = None
 
     @property
     def enabled_platforms(self) -> list[str]:
@@ -114,6 +132,9 @@ def _validate(raw: dict, source_path: str) -> CrosspostSpec:
         summary=raw.get("summary"),
         hashtags=list(raw.get("hashtags", [])),
         canonical_url=raw.get("canonical_url"),
+        linkedin_image=(
+            LinkedInImage(**raw["linkedin_image"]) if "linkedin_image" in raw else None
+        ),
     )
 
 

@@ -177,3 +177,47 @@ def test_character_limit_counts_what_the_reader_sees_not_the_escapes():
     t = FakeTransport([created()])
     make_client(t).create_post("(" * 3000)  # 6000 escaped, 3000 visible
     assert len(t.calls[0]["json"]["commentary"]) == 6000
+
+
+# --- image posts ----------------------------------------------------------
+
+def init_upload(image_urn="urn:li:image:C4E", upload_url="https://upload.example/abc"):
+    return ok(200, {"value": {"uploadUrl": upload_url, "image": image_urn}})
+
+
+def test_image_post_initialises_uploads_then_attaches_the_image_urn():
+    t = FakeTransport([init_upload(), ok(201), created()])
+    make_client(t).create_post("Hello", image=(b"\x89PNG", "A diagram"))
+
+    init, put, post = t.calls
+    assert init["method"] == "POST"
+    assert init["url"] == "https://api.linkedin.com/rest/images?action=initializeUpload"
+    assert init["json"] == {"initializeUploadRequest": {"owner": URN}}
+
+    assert put["method"] == "PUT"
+    assert put["url"] == "https://upload.example/abc"
+    assert put["data"] == b"\x89PNG"
+    assert put["headers"]["Authorization"] == "Bearer tok"
+
+    assert post["json"]["content"] == {
+        "media": {"id": "urn:li:image:C4E", "altText": "A diagram"}
+    }
+
+
+def test_text_post_has_no_content_block():
+    t = FakeTransport([created()])
+    make_client(t).create_post("Hello")
+    assert "content" not in t.calls[0]["json"]
+
+
+def test_failed_upload_does_not_create_the_post():
+    t = FakeTransport([init_upload(), ok(500)])
+    with pytest.raises(PlatformError, match="upload"):
+        make_client(t).create_post("Hello", image=(b"x", "alt"))
+    assert len(t.calls) == 2
+
+
+def test_initialise_response_without_an_upload_url_is_an_error():
+    t = FakeTransport([ok(200, {"value": {}})])
+    with pytest.raises(PlatformError, match="uploadUrl"):
+        make_client(t).create_post("Hello", image=(b"x", "alt"))

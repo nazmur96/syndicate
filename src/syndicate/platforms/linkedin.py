@@ -101,6 +101,7 @@ _REAUTH_HINT = (
 class LinkedInClient:
     BASE_URL = "https://api.linkedin.com"
     POSTS_PATH = "/rest/posts"
+    IMAGES_PATH = "/rest/images"
     USERINFO_URL = "https://api.linkedin.com/v2/userinfo"
     #: LinkedIn cuts a version monthly and supports each for at least a year.
     DEFAULT_API_VERSION = "202608"
@@ -141,7 +142,7 @@ class LinkedInClient:
                     return str(resp.body[key])
         return (resp.text or "").strip()[:200] or f"HTTP {resp.status_code}"
 
-    def _raise_for_status(self, resp: Response) -> None:
+    def _raise_for_status(self, resp: Response, what: str | None = None) -> None:
         if 200 <= resp.status_code < 300:
             return
         detail = self._detail(resp)
@@ -161,7 +162,8 @@ class LinkedInClient:
         if resp.status_code == 429:
             retry = parse_retry_after(resp.header("Retry-After"))
             raise RateLimited(f"LinkedIn rate limit hit: {detail}", retry_after=retry)
-        raise PlatformError(f"LinkedIn POST {self.POSTS_PATH} failed ({resp.status_code}): {detail}")
+        what = what or f"POST {self.POSTS_PATH}"
+        raise PlatformError(f"LinkedIn {what} failed ({resp.status_code}): {detail}")
 
     # -- operations --------------------------------------------------------
 
@@ -188,8 +190,46 @@ class LinkedInClient:
             )
         return True
 
-    def create_post(self, commentary: str) -> WriteResult:
-        """Create a published text post on the member's own feed.
+    def upload_image(self, data: bytes) -> str:
+        """Upload an image and return its ``urn:li:image:...``.
+
+        Images API: initializeUpload returns a one-shot ``uploadUrl`` and the
+        image URN; the bytes are then PUT to that URL with the same bearer token.
+        """
+        resp = self._transport.request(
+            "POST",
+            f"{self.BASE_URL}{self.IMAGES_PATH}?action=initializeUpload",
+            headers=self._headers(),
+            json={"initializeUploadRequest": {"owner": self._author}},
+        )
+        self._raise_for_status(resp, what="image initializeUpload")
+        body = resp.body if isinstance(resp.body, dict) else {}
+        value = body.get("value") or {}
+        upload_url, urn = value.get("uploadUrl"), value.get("image")
+        if not upload_url or not urn:
+            raise PlatformError(
+                "LinkedIn image initializeUpload returned no uploadUrl/image URN"
+            )
+
+        put = self._transport.request(
+            "PUT",
+            upload_url,
+            headers={
+                "Authorization": f"Bearer {self._token}",
+                "Content-Type": "application/octet-stream",
+            },
+            data=data,
+        )
+        self._raise_for_status(put, what="image upload")
+        return urn
+
+    def create_post(
+        self, commentary: str, image: tuple[bytes, str] | None = None
+    ) -> WriteResult:
+        """Create a published post on the member's own feed.
+
+        ``image`` is ``(bytes, alt_text)``; it is uploaded first, so a failed
+        upload never leaves a half-made post behind.
 
         There is no draft state on creation, so callers must apply the human
         gate before reaching this method.
@@ -212,6 +252,9 @@ class LinkedInClient:
             "lifecycleState": "PUBLISHED",
             "isReshareDisabledByAuthor": False,
         }
+        if image is not None:
+            data, alt = image
+            payload["content"] = {"media": {"id": self.upload_image(data), "altText": alt}}
         resp = self._transport.request(
             "POST", f"{self.BASE_URL}{self.POSTS_PATH}", headers=self._headers(), json=payload
         )

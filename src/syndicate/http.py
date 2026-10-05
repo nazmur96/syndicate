@@ -36,6 +36,7 @@ class Transport(Protocol):
         *,
         headers: dict[str, str] | None = None,
         json: Any | None = None,
+        data: bytes | None = None,
         timeout: float | None = None,
     ) -> Response: ...
 
@@ -49,12 +50,19 @@ class RequestsTransport:
         self._session = requests.Session()
         self._timeout = timeout
 
-    def request(self, method, url, *, headers=None, json=None, timeout=None) -> Response:
+    def request(
+        self, method, url, *, headers=None, json=None, data=None, timeout=None
+    ) -> Response:
         import requests
 
         try:
             resp = self._session.request(
-                method, url, headers=headers, json=json, timeout=timeout or self._timeout
+                method,
+                url,
+                headers=headers,
+                json=json,
+                data=data,
+                timeout=timeout or self._timeout,
             )
         except requests.RequestException as exc:
             raise TransportError(f"{method} {url} failed: {exc}") from exc

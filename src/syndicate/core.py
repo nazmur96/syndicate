@@ -193,6 +193,20 @@ class Syndicator:
 
     # -- LinkedIn ----------------------------------------------------------
 
+    def _linkedin_image(self, doc: Document) -> tuple[bytes, str] | None:
+        """Read the optional post image, relative to the document's directory."""
+        spec = doc.crosspost.linkedin_image
+        if spec is None:
+            return None
+        path = self.repo_root / Path(doc.source_path).parent / spec.path
+        try:
+            return path.read_bytes(), spec.alt
+        except OSError as exc:
+            raise PlatformError(
+                f"{doc.source_path}: linkedin_image {spec.path} cannot be read: "
+                f"{exc.strerror}"
+            ) from exc
+
     def _linkedin_step(self, doc, canonical, site_base, mode) -> PlatformResult:
         if mode != MODE_PUBLISH:
             return PlatformResult(
@@ -228,8 +242,9 @@ class Syndicator:
                 message="summary changed after posting; LinkedIn is post-once, not updated",
             )
 
+        image = self._linkedin_image(doc)
         self.linkedin.verify_author()
-        result = self.linkedin.create_post(commentary)
+        result = self.linkedin.create_post(commentary, image=image)
         self.manifest.record(
             doc.source_path,
             "linkedin",

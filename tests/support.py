@@ -11,9 +11,11 @@ class FakeTransport:
     responses: list[Response] = field(default_factory=list)
     calls: list[dict] = field(default_factory=list)
 
-    def request(self, method, url, *, headers=None, json=None, timeout=None) -> Response:
+    def request(
+        self, method, url, *, headers=None, json=None, data=None, timeout=None
+    ) -> Response:
         self.calls.append(
-            {"method": method, "url": url, "headers": headers or {}, "json": json}
+            {"method": method, "url": url, "headers": headers or {}, "json": json, "data": data}
         )
         if not self.responses:
             raise AssertionError(f"unexpected request: {method} {url}")

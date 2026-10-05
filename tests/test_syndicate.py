@@ -53,15 +53,17 @@ class StubDevTo:
 class StubLinkedIn:
     def __init__(self, fail=None):
         self.posts = []
+        self.images = []
         self.fail = fail
 
     def verify_author(self):
         return True
 
-    def create_post(self, commentary):
+    def create_post(self, commentary, image=None):
         if self.fail:
             raise self.fail
         self.posts.append(commentary)
+        self.images.append(image)
         from syndicate.platforms.base import WriteResult
         return WriteResult(remote_id="urn:li:share:1",
                            url="https://www.linkedin.com/feed/update/urn:li:share:1/",
@@ -246,3 +248,36 @@ def test_draft_result_always_names_the_dashboard_even_when_a_temp_url_exists(tmp
     dev = next(r for r in results if r.platform == "devto")
     assert dev.url == "https://dev.to/me/x-temp-slug-1"
     assert "https://dev.to/dashboard" in dev.message
+
+
+# --- LinkedIn image -------------------------------------------------------
+
+def write_image_doc(tmp_path, image_exists=True):
+    p = write_doc(tmp_path)
+    src = p.read_text().replace(
+        "  linkedin: summary\n",
+        "  linkedin: summary\n  linkedin_image:\n    path: img/flow.png\n    alt: The flow\n",
+    )
+    p.write_text(src)
+    if image_exists:
+        (p.parent / "img").mkdir()
+        (p.parent / "img" / "flow.png").write_bytes(b"\x89PNG-bytes")
+    return p
+
+
+def test_linkedin_image_is_read_relative_to_the_document(tmp_path):
+    linkedin = StubLinkedIn()
+    make(tmp_path, StubDevTo(), linkedin).run([write_image_doc(tmp_path)], mode="publish")
+    assert linkedin.images == [(b"\x89PNG-bytes", "The flow")]
+
+
+def test_missing_linkedin_image_fails_linkedin_without_posting(tmp_path):
+    devto, linkedin = StubDevTo(), StubLinkedIn()
+    results = make(tmp_path, devto, linkedin).run(
+        [write_image_doc(tmp_path, image_exists=False)], mode="publish"
+    )
+    li = next(r for r in results if r.platform == "linkedin")
+    assert li.action == "failed"
+    assert "img/flow.png" in li.message
+    assert linkedin.posts == []
+    assert next(r for r in results if r.platform == "devto").action != "failed"
