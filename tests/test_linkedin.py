@@ -136,3 +136,44 @@ def test_commentary_over_the_character_limit_is_rejected_locally():
         make_client(t).create_post("x" * 3001)
     assert "3000" in str(exc.value)
     assert t.calls == []
+
+
+# --- little text escaping -------------------------------------------------
+#
+# commentary is LinkedIn "little text", not plain text. An unescaped reserved
+# character silently truncates the post at that point: a live post was cut to
+# "...External Secrets Operator " because the next character was "(".
+
+def test_reserved_characters_are_backslash_escaped():
+    t = FakeTransport([created()])
+    make_client(t).create_post(r"ESO (v1) [a] {b} <c> @d |e ~f _g *h \i")
+    assert t.calls[0]["json"]["commentary"] == (
+        r"ESO \(v1\) \[a\] \{b\} \<c\> \@d \|e \~f \_g \*h \\i"
+    )
+
+
+def test_hashtags_become_hashtag_templates():
+    t = FakeTransport([created()])
+    make_client(t).create_post("#Kubernetes #AWS")
+    assert t.calls[0]["json"]["commentary"] == (
+        r"{hashtag|\#|Kubernetes} {hashtag|\#|AWS}"
+    )
+
+
+def test_a_hash_that_is_not_a_hashtag_is_escaped():
+    t = FakeTransport([created()])
+    make_client(t).create_post("issue #  and C#")
+    assert t.calls[0]["json"]["commentary"] == r"issue \#  and C\#"
+
+
+def test_urls_and_newlines_pass_through():
+    t = FakeTransport([created()])
+    text = "Para one.\n\nhttps://github.com/a/b/blob/main/c.md"
+    make_client(t).create_post(text)
+    assert t.calls[0]["json"]["commentary"] == text
+
+
+def test_character_limit_counts_what_the_reader_sees_not_the_escapes():
+    t = FakeTransport([created()])
+    make_client(t).create_post("(" * 3000)  # 6000 escaped, 3000 visible
+    assert len(t.calls[0]["json"]["commentary"]) == 6000

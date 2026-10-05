@@ -44,9 +44,18 @@ Unverified (flagged rather than guessed):
     refresh. (An issued token did report ``expires_in=5183999``, i.e. 60 days.)
   * Every error path. No 401, 403, 422, or 429 has been seen from the live API;
     those branches are covered by fake-transport tests only.
+
+Learned the hard way (2026-10-05):
+  * ``commentary`` is LinkedIn "little text", not plain text. An unescaped
+    reserved character silently truncates the post there: a 1447-character
+    summary went out as its first 245 characters, cut before a "(". Every
+    reserved character is backslash-escaped, and hashtags are sent as
+    ``{hashtag|\\#|tag}`` templates so they stay clickable.
 """
 
 from __future__ import annotations
+
+import re
 
 from ..http import RequestsTransport, Response, Transport
 from .base import (
@@ -61,6 +70,22 @@ from .base import (
 #: LinkedIn commentary limit -- see module docstring (unverified in the Posts
 #: API reference itself).
 MAX_COMMENTARY_CHARS = 3000
+
+#: Reserved in little text; any of these unescaped can end the post early.
+_LITTLE_TEXT_RESERVED = re.compile(r"([\\|{}@\[\]()<>#*_~])")
+_HASHTAG = re.compile(r"(?<!\S)#(\w+)")
+
+
+def to_little_text(text: str) -> str:
+    """Escape plain text for ``commentary``, keeping ``#tag`` as a hashtag."""
+    out, pos = [], 0
+    for match in _HASHTAG.finditer(text):
+        out.append(_LITTLE_TEXT_RESERVED.sub(r"\\\1", text[pos:match.start()]))
+        out.append("{hashtag|\\#|" + match.group(1) + "}")
+        pos = match.end()
+    out.append(_LITTLE_TEXT_RESERVED.sub(r"\\\1", text[pos:]))
+    return "".join(out)
+
 
 #: Member access tokens last 60 days and cannot be refreshed without approved
 #: partner access; re-auth is manual. See docs/SETUP.md.
@@ -177,7 +202,7 @@ class LinkedInClient:
 
         payload = {
             "author": self._author,
-            "commentary": commentary,
+            "commentary": to_little_text(commentary),
             "visibility": "PUBLIC",
             "distribution": {
                 "feedDistribution": "MAIN_FEED",

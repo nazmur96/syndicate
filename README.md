@@ -134,8 +134,15 @@ reference gives the viewable URL as `urn:li:ugcPost:<id>`, but the post came
 back as `urn:li:share:<id>`. The URL is built from whatever `x-restli-id`
 returns, so both work — don't "fix" it by hardcoding either form.
 
-Remember that a LinkedIn post cannot be edited or deleted through this tool
-once it lands. Removing one means doing it from the LinkedIn UI.
+Remember that a LinkedIn post cannot be edited through this tool once it
+lands. It can be deleted -- `DELETE /rest/posts/{url-encoded urn}` with the
+same token returns `204` (verified live 2026-10-05) -- but the tool does not
+do that for you, and the manifest entry must then be removed by hand before
+the document will post again.
+
+The `commentary` field is LinkedIn "little text", not plain text: reserved
+characters such as `(` silently truncate the post unless escaped. The adapter
+escapes them and turns `#tag` into a real hashtag; see `to_little_text`.
 
 Deliberately out of scope: Medium and X.
 
